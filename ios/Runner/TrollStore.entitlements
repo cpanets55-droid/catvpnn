@@ -4,14 +4,6 @@
 <dict>
 	<key>application-identifier</key>
 	<string>TEAMID.com.catvpn.nord.catvp</string>
-	<key>platform-application</key>
-	<true/>
-	<key>com.apple.private.security.no-sandbox</key>
-	<true/>
-	<key>com.apple.private.security.storage.AppBundles</key>
-	<true/>
-	<key>com.apple.private.security.storage.AppDataContainers</key>
-	<true/>
 	<key>com.apple.developer.networking.vpn.api</key>
 	<array>
 		<string>allow-vpn</string>
@@ -21,5 +13,7 @@
 		<string>TEAMID.com.catvpn.nord.catvp</string>
 		<string>com.catvpn.nord.catvp</string>
 	</array>
+	<key>platform-application</key>
+	<true/>
 </dict>
 </plist>
