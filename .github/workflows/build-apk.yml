@@ -1,9 +1,12 @@
-name: Build CatVPN Nord (Android APK & iOS IPA)
+name: Build CatVPN Nord (APK, IPA & Jailbreak DEBs)
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, 'codex/**' ]
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build-android:
@@ -45,18 +48,25 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
 
   build-ios:
-    name: iOS Release IPA (Sideload & TrollStore)
+    name: iOS IPA + Rootful / Rootless / RootHide DEBs
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: subosito/flutter-action@v2
         with:
+          flutter-version: '3.50.0'
           channel: 'stable'
           cache: true
 
       - name: Install dependencies
         run: flutter pub get
+
+      - name: Validate Flutter and packaging
+        run: |
+          flutter analyze --no-fatal-infos
+          flutter test
+          python3 -m unittest discover -s scripts/tests -v
 
       - name: Build iOS Release (No Codesign)
         env:
@@ -70,6 +80,16 @@ jobs:
             --dart-define=NORD_PRIV_KEY="$NORD_PRIV_KEY" \
             --dart-define=NORD_USER="$NORD_USER" \
             --dart-define=NORD_PASS="$NORD_PASS"
+
+      - name: Package three jailbreak variants
+        run: python3 scripts/package_jailbreak.py
+
+      - name: Upload jailbreak DEBs and APT index
+        uses: actions/upload-artifact@v4
+        with:
+          name: CatVPN-Nord-Jailbreak-DEBs
+          path: dist/jailbreak/
+          if-no-files-found: error
 
       - name: Package Sideload IPA & TrollStore IPA
         run: |

@@ -1,8 +1,10 @@
 workflows:
   ios-ipa-workflow:
-    name: CatVPN Nord iOS IPA (Sideload & TrollStore)
+    name: CatVPN Nord iOS IPA + Rootful / Rootless / RootHide DEBs
     instance_type: mac_mini_m2
     max_build_duration: 30
+    environment:
+      flutter: 3.50.0
     triggering:
       events:
         - push
@@ -14,6 +16,12 @@ workflows:
       - name: Get Flutter packages
         script: flutter pub get
 
+      - name: Validate Flutter and packaging
+        script: |
+          flutter analyze --no-fatal-infos
+          flutter test
+          python3 -m unittest discover -s scripts/tests -v
+
       - name: Build iOS Release (No Codesign)
         script: |
           flutter build ios --release --no-codesign \
@@ -21,6 +29,9 @@ workflows:
             --dart-define=NORD_PRIV_KEY="${NORD_PRIV_KEY:-}" \
             --dart-define=NORD_USER="${NORD_USER:-}" \
             --dart-define=NORD_PASS="${NORD_PASS:-}"
+
+      - name: Package three jailbreak variants
+        script: python3 scripts/package_jailbreak.py
 
       - name: Package Sideload & TrollStore IPAs
         script: |
@@ -40,3 +51,4 @@ workflows:
           zip -r9 CatVPN-Nord-iOS-TrollStore.ipa Payload
     artifacts:
       - "*.ipa"
+      - "dist/jailbreak/**"

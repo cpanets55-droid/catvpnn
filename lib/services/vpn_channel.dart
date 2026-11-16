@@ -6,12 +6,18 @@ class VpnStatusSnapshot {
   final int rxBytes;
   final int txBytes;
   final bool wasRevoked;
+  final bool isTransitioning;
+  final bool isAvailable;
+  final bool supportsTrafficStats;
 
   const VpnStatusSnapshot({
     required this.isConnected,
     required this.rxBytes,
     required this.txBytes,
     this.wasRevoked = false,
+    this.isTransitioning = false,
+    this.isAvailable = true,
+    this.supportsTrafficStats = true,
   });
 }
 
@@ -84,12 +90,14 @@ class VpnChannel {
 
   static Future<VpnStatusSnapshot> getStatus() async {
     if (!isMobileSupported) {
-      return const VpnStatusSnapshot(isConnected: false, rxBytes: 0, txBytes: 0);
+      return const VpnStatusSnapshot(
+          isConnected: false, rxBytes: 0, txBytes: 0);
     }
     try {
       final raw = await _channel.invokeMapMethod<String, dynamic>('getStatus');
       if (raw == null) {
-        return const VpnStatusSnapshot(isConnected: false, rxBytes: 0, txBytes: 0);
+        return const VpnStatusSnapshot(
+            isConnected: false, rxBytes: 0, txBytes: 0, isAvailable: false);
       }
       final state = (raw['state'] as String?) ?? 'DOWN';
       final rx = (raw['rxBytes'] as num?)?.toInt() ?? 0;
@@ -100,9 +108,12 @@ class VpnChannel {
         rxBytes: rx,
         txBytes: tx,
         wasRevoked: revoked,
+        isTransitioning: state == 'CONNECTING' || state == 'DISCONNECTING',
+        supportsTrafficStats: (raw['supportsTrafficStats'] as bool?) ?? !isIOS,
       );
     } catch (_) {
-      return const VpnStatusSnapshot(isConnected: false, rxBytes: 0, txBytes: 0);
+      return const VpnStatusSnapshot(
+          isConnected: false, rxBytes: 0, txBytes: 0, isAvailable: false);
     }
   }
 
