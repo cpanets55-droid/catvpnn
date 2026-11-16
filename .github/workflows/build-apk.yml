@@ -49,7 +49,10 @@ jobs:
 
   build-ios:
     name: iOS IPA + Rootful / Rootless / RootHide DEBs
-    runs-on: macos-latest
+    # Pin the Intel host to avoid the constrained macOS arm64 runner queue.
+    # Xcode still cross-compiles the iPhone app for arm64.
+    runs-on: macos-26-intel
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
