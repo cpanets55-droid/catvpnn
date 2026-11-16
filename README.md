@@ -2,7 +2,9 @@
 
 Flutter VPN client. Android connects using WireGuard; iOS uses the system
 IKEv2 VPN service with NordVPN service credentials and can export a WireGuard
-configuration when those credentials are missing. iOS does not expose traffic
+configuration when those credentials are missing. The iOS UI talks to a separate
+launchd service on loopback, so API calls keep working after the UI closes.
+iOS does not expose traffic
 byte counters through NEVPNManager, so the UI shows unavailable counters.
 
 ## Jailbreak packages
@@ -62,14 +64,16 @@ flutter pub get
 flutter analyze --no-fatal-infos
 flutter test
 python3 -m unittest discover -s scripts/tests -v
+python3 scripts/test_local_api.py
 flutter build ios --release --no-codesign
+python3 scripts/build_ios_daemon.py
 python3 scripts/package_jailbreak.py
 ```
 
 The output is `dist/jailbreak/`, containing `debs/*.deb`, the Packages indexes,
 Release, and build-manifest.json with source/binary checksums. By default the
 Debian version comes from the built app's version and build number; for this
-source version the filenames end with `_1.0.5+2_<architecture>.deb`.
+source version the filenames end with `_1.0.6+3_<architecture>.deb`.
 The output directory must be empty. `--output <new-directory>` and `--version`
 are available for a separate release. No existing published package is overwritten.
 
@@ -94,3 +98,47 @@ keep the site's existing HTML/icon/IPA assets. No workflow auto-deploys packages
 Nord credentials can be entered in the app. For a private build, the existing
 NORD_TOKEN, NORD_PRIV_KEY, NORD_USER, and NORD_PASS build variables remain
 supported. Do not distribute a binary containing your personal credentials.
+
+## Local change-IP API (iOS jailbreak)
+
+Install the matching DEB, open CatVPN, and connect once with your NordVPN service
+credentials. Then a script or Shortcuts action on the **same iPhone** can call:
+
+```sh
+curl --max-time 120 http://127.0.0.1:8787/changeip
+curl --max-time 120 -X POST http://127.0.0.1:8787/v1/change-ip
+curl http://127.0.0.1:8787/status
+curl http://127.0.0.1:8787/health
+```
+
+No API key or Authorization header is required. The socket binds only to
+127.0.0.1; it is not available on Wi-Fi/LAN. A remote browser origin is rejected.
+Use `?country_id=234` or a POST JSON body `{"country_id":234}` to choose a NordVPN
+country ID. Without an override, the service keeps the last connected country.
+
+`/changeip` chooses a different IKEv2 server, waits for the previous tunnel to
+stop, saves the new server and waits for an actual connected state. Its JSON
+contains `state`, `serverHostname`, `countryId`, `previous_hostname`, `old_ip`,
+`new_ip`, and `ip_changed`. A different server does not guarantee a different
+public IP: `ip_changed` is false if the measured IP is unchanged, or null if an
+IP lookup fails. Clients requiring a confirmed new IP must check this field.
+
+An unconfigured VPN returns HTTP 412 (`VPN_NOT_CONFIGURED`). Concurrent changes
+return 409 (`VPN_BUSY`); the service does not queue multiple rotations. Network
+or tunnel failures return 502/504. Allow up to 120 seconds for a request. Status
+remains available during a change, and the app refreshes its server/IP when it
+returns to the foreground.
+
+The DEB installs `com.catvpn.nord.api.plist` in the jailbreak's
+Library/LaunchDaemons directory and a signed native helper inside the app bundle.
+launchd runs it as mobile with RunAtLoad/KeepAlive, independently of Flutter.
+The helper uses the same application identifier and Keychain group as the app;
+the VPN password remains in Keychain. Installation loads the service, upgrades
+stop/reload it, and removal unloads it. After a reboot, activate the jailbreak
+and unlock the phone once before using the API. Closing CatVPN's UI does not
+stop the helper; disabling the jailbreak does.
+
+`scripts/test_local_api.py` exercises the real Swift socket server on macOS with
+a fake VPN boundary (no Nord account/network tunnel). Device testing is still
+needed to validate launchd, VPN profile authorization and Keychain access on each
+jailbreak. These tests never claim that a host runner established an iOS tunnel.

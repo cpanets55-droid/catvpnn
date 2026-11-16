@@ -9,6 +9,8 @@ class VpnStatusSnapshot {
   final bool isTransitioning;
   final bool isAvailable;
   final bool supportsTrafficStats;
+  final String serverHostname;
+  final int? countryId;
 
   const VpnStatusSnapshot({
     required this.isConnected,
@@ -18,6 +20,8 @@ class VpnStatusSnapshot {
     this.isTransitioning = false,
     this.isAvailable = true,
     this.supportsTrafficStats = true,
+    this.serverHostname = '',
+    this.countryId,
   });
 }
 
@@ -44,6 +48,7 @@ class VpnChannel {
     String hostname = '',
     String username = '',
     String password = '',
+    int? countryId,
   }) async {
     if (!isMobileSupported) {
       throw PlatformException(
@@ -58,6 +63,7 @@ class VpnChannel {
         'hostname': hostname,
         'username': username,
         'password': password,
+        if (countryId != null) 'countryId': countryId,
       },
     );
     return state ?? 'DOWN';
@@ -110,6 +116,8 @@ class VpnChannel {
         wasRevoked: revoked,
         isTransitioning: state == 'CONNECTING' || state == 'DISCONNECTING',
         supportsTrafficStats: (raw['supportsTrafficStats'] as bool?) ?? !isIOS,
+        serverHostname: (raw['serverHostname'] as String?) ?? '',
+        countryId: (raw['countryId'] as num?)?.toInt(),
       );
     } catch (_) {
       return const VpnStatusSnapshot(

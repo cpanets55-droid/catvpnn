@@ -65,6 +65,7 @@ class _CatVpnHomeScreenState extends State<CatVpnHomeScreen>
   List<NordCountry> _countries = const [];
   NordCountry? _selectedCountry; // null = Smart Fastest
   NordServer? _currentServer;
+  String _liveServerHostname = '';
   ExitIpInfo _exitIp = const ExitIpInfo(ip: 'Đang kiểm tra...');
   bool _refreshingIp = false;
   String? _statusHint;
@@ -161,6 +162,7 @@ class _CatVpnHomeScreenState extends State<CatVpnHomeScreen>
     final liveStatus = await VpnChannel.getStatus();
     if (mounted && liveStatus.isConnected) {
       setState(() {
+        _syncApiServer(liveStatus);
         _phase = VpnConnectionPhase.connected;
         _connectedSince ??= DateTime.now();
         _rxBytes = liveStatus.rxBytes;
@@ -235,10 +237,14 @@ class _CatVpnHomeScreenState extends State<CatVpnHomeScreen>
     }
 
     if (snap.isConnected) {
+      final connectionChanged = _phase != VpnConnectionPhase.connected ||
+          (snap.serverHostname.isNotEmpty &&
+              snap.serverHostname != _liveServerHostname);
       final deltaRx = max(0, snap.rxBytes - _rxBytes);
       final deltaTx = max(0, snap.txBytes - _txBytes);
       setState(() {
-        if (_phase != VpnConnectionPhase.connected) {
+        _syncApiServer(snap);
+        if (connectionChanged) {
           _phase = VpnConnectionPhase.connected;
           _connectedSince = DateTime.now();
           _statusHint = null;
@@ -248,8 +254,10 @@ class _CatVpnHomeScreenState extends State<CatVpnHomeScreen>
         _rxBytes = snap.rxBytes;
         _txBytes = snap.txBytes;
       });
+      if (connectionChanged) unawaited(_refreshExitIp());
     } else if (_phase != VpnConnectionPhase.disconnected) {
       setState(() {
+        _liveServerHostname = '';
         _phase = VpnConnectionPhase.disconnected;
         _connectedSince = null;
         _rxSpeedBps = 0;
@@ -258,12 +266,28 @@ class _CatVpnHomeScreenState extends State<CatVpnHomeScreen>
         _txBytes = 0;
         _statusHint = null;
         if (snap.wasRevoked) {
-          _statusHint = 'VPN vừa bị dịch vụ Proxy/Relay khác trên máy chiếm quyền mạng (hãy tắt Relay trước khi bật VPN).';
+          _statusHint =
+              'VPN vừa bị dịch vụ Proxy/Relay khác trên máy chiếm quyền mạng (hãy tắt Relay trước khi bật VPN).';
         }
       });
       unawaited(_refreshExitIp());
     } else if (_connectedSince != null) {
       setState(() {});
+    }
+  }
+
+  void _syncApiServer(VpnStatusSnapshot snapshot) {
+    if (snapshot.serverHostname.isEmpty) return;
+    _liveServerHostname = snapshot.serverHostname;
+    if (_currentServer?.hostname != snapshot.serverHostname) {
+      _currentServer = null;
+      _selectedCountry = null;
+      for (final country in _countries) {
+        if (country.id == snapshot.countryId) {
+          _selectedCountry = country;
+          break;
+        }
+      }
     }
   }
 
@@ -374,9 +398,8 @@ class _CatVpnHomeScreenState extends State<CatVpnHomeScreen>
           throw Exception('Không tìm thấy máy chủ khả dụng cho khu vực này.');
         }
         if (forceDifferentServer && candidates.length > 1) {
-          final others = candidates
-              .where((s) => s.id != _currentServer?.id)
-              .toList();
+          final others =
+              candidates.where((s) => s.id != _currentServer?.id).toList();
           target = others[Random().nextInt(min(5, others.length))];
         } else {
           target = candidates.first;
@@ -400,6 +423,7 @@ class _CatVpnHomeScreenState extends State<CatVpnHomeScreen>
         hostname: target.hostname,
         username: creds.serviceUsername,
         password: creds.servicePassword,
+        countryId: target.countryId,
       );
       if (!mounted) return;
 
@@ -418,7 +442,8 @@ class _CatVpnHomeScreenState extends State<CatVpnHomeScreen>
       } else if (resultState == 'NEED_WG_EXPORT') {
         setState(() {
           _phase = VpnConnectionPhase.disconnected;
-          _statusHint = 'Thiếu tài khoản dịch vụ IKEv2. Nhập cấu hình này vào ứng dụng WireGuard để kết nối.';
+          _statusHint =
+              'Thiếu tài khoản dịch vụ IKEv2. Nhập cấu hình này vào ứng dụng WireGuard để kết nối.';
         });
         await VpnChannel.shareWireGuardConfig(
           fileName: target.hostname,
@@ -552,8 +577,8 @@ class _CatVpnHomeScreenState extends State<CatVpnHomeScreen>
     final statusColor = isConnected
         ? const Color(0xFF00F5A0)
         : _phase == VpnConnectionPhase.connecting
-        ? const Color(0xFF38BDF8)
-        : const Color(0xFF94A3B8);
+            ? const Color(0xFF38BDF8)
+            : const Color(0xFF94A3B8);
 
     final srv = _currentServer;
 
@@ -673,8 +698,8 @@ class _CatVpnHomeScreenState extends State<CatVpnHomeScreen>
                                 isConnected
                                     ? 'ĐÃ BẢO VỆ • ẨN IP THỰC'
                                     : _phase == VpnConnectionPhase.connecting
-                                    ? 'ĐANG THIẾT LẬP KẾT NỐI...'
-                                    : 'CHƯA KẾT NỐI VPN',
+                                        ? 'ĐANG THIẾT LẬP KẾT NỐI...'
+                                        : 'CHƯA KẾT NỐI VPN',
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
@@ -902,9 +927,12 @@ class _CatVpnHomeScreenState extends State<CatVpnHomeScreen>
                                             ),
                                           ),
                                           Text(
-                                            srv != null
-                                                ? '${srv.hostname} • Tải ${srv.load}%'
-                                                : 'Chạm để chọn trong 150 quốc gia',
+                                            _liveServerHostname.isNotEmpty &&
+                                                    isConnected
+                                                ? '$_liveServerHostname • IKEv2'
+                                                : srv != null
+                                                    ? '${srv.hostname} • Tải ${srv.load}%'
+                                                    : 'Chạm để chọn trong 150 quốc gia',
                                             maxLines: 1,
                                             overflow: TextOverflow.ellipsis,
                                             style: const TextStyle(
@@ -932,8 +960,8 @@ class _CatVpnHomeScreenState extends State<CatVpnHomeScreen>
                               onTap: _phase == VpnConnectionPhase.connecting
                                   ? null
                                   : () => _connectToServer(
-                                      forceDifferentServer: true,
-                                    ),
+                                        forceDifferentServer: true,
+                                      ),
                               child: Container(
                                 padding: const EdgeInsets.symmetric(
                                   horizontal: 15,

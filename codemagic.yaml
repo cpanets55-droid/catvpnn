@@ -21,6 +21,7 @@ workflows:
           flutter analyze --no-fatal-infos
           flutter test
           python3 -m unittest discover -s scripts/tests -v
+          python3 scripts/test_local_api.py
 
       - name: Build iOS Release (No Codesign)
         script: |
@@ -31,6 +32,8 @@ workflows:
             --dart-define=NORD_PASS="${NORD_PASS:-}"
 
       - name: Package three jailbreak variants
-        script: python3 scripts/package_jailbreak.py
+        script: |
+          python3 scripts/build_ios_daemon.py
+          python3 scripts/package_jailbreak.py
     artifacts:
       - "dist/jailbreak/**"

@@ -30,6 +30,7 @@ VARIANTS = {
 PACKAGE_PREFIX = "com.catvpn.nord"
 BUNDLE_ID = "com.catvpn.nord.catvp"
 APP_NAME = "CatVPNNord.app"
+DAEMON_LABEL = "com.catvpn.nord.api"
 MACHO_MAGICS = {
     b"\xfe\xed\xfa\xce", b"\xce\xfa\xed\xfe", b"\xfe\xed\xfa\xcf",
     b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\xbe\xba\xfe\xca",
@@ -80,8 +81,21 @@ def sign_app(app, profile):
     sign = ["codesign", "--force", "--sign", "-", "--timestamp=none"]
     binaries = sorted((p for p in app.rglob("*") if is_macho(p)),
                       key=lambda p: len(p.parts), reverse=True)
+    daemon_profile = profile.with_name("Daemon.entitlements")
+    daemon_rights = plistlib.loads(profile.read_bytes())
+    daemon_rights.pop("com.apple.private.security.container-required", None)
+    daemon_rights.update({
+        "com.apple.private.security.no-sandbox": True,
+        "com.apple.private.security.storage.AppBundles": True,
+        "com.apple.private.security.storage.AppDataContainers": True,
+    })
+    daemon_profile.write_bytes(plistlib.dumps(daemon_rights))
     for binary in binaries:
-        subprocess.run(sign + [str(binary)], check=True)
+        if binary == app / "Helpers" / "CatVPNApi":
+            subprocess.run(sign + ["--identifier", BUNDLE_ID, "--entitlements", str(daemon_profile), str(binary)], check=True)
+            subprocess.run(["codesign", "--verify", "--strict", str(binary)], check=True)
+        else:
+            subprocess.run(sign + [str(binary)], check=True)
     frameworks = sorted(app.rglob("*.framework"), key=lambda p: len(p.parts), reverse=True)
     for framework in frameworks:
         subprocess.run(sign + [str(framework)], check=True)
@@ -97,6 +111,7 @@ def maintainer_scripts(variant):
     # RootHide's shell/tools interpret /Applications relative to jbroot. Never
     # guess a randomized .jbroot-* path or install via a TrollStore helper.
     app_path = f"/{app_parent}/{APP_NAME}"
+    daemon_plist = f"{prefix}/Library/LaunchDaemons/{DAEMON_LABEL}.plist"
     preinst = shell + environment + f'''case "${{1:-}}" in
   install|upgrade)
     actual="$(dpkg --print-architecture)"
@@ -107,8 +122,16 @@ def maintainer_scripts(variant):
     ;;
 esac
 '''
+    stop_service = f'''if launchctl list "{DAEMON_LABEL}" >/dev/null 2>&1; then
+  launchctl unload "{daemon_plist}"
+fi
+'''
     postinst = shell + environment + f'''case "${{1:-}}" in
-  configure) uicache -p "{app_path}" ;;
+  configure|abort-upgrade|abort-remove|abort-deconfigure)
+    {stop_service}
+    uicache -p "{app_path}"
+    launchctl load "{daemon_plist}"
+    ;;
 esac
 '''
     if variant in ("rootless", "roothide"):
@@ -119,10 +142,29 @@ fi
 '''
     # prerm runs before dpkg removes the bundle, so uicache can still read it.
     prerm = shell + environment + f'''case "${{1:-}}" in
+  remove|deconfigure|upgrade)
+    {stop_service}
+    ;;
+esac
+case "${{1:-}}" in
   remove|deconfigure) uicache -u "{app_path}" ;;
 esac
 '''
     return {"preinst": preinst, "postinst": postinst, "prerm": prerm}
+
+
+def launch_daemon(variant):
+    _, app_parent, _ = VARIANTS[variant]
+    return {
+        "Label": DAEMON_LABEL,
+        "ProgramArguments": [f"/{app_parent}/{APP_NAME}/Helpers/CatVPNApi"],
+        "UserName": "mobile",
+        "GroupName": "mobile",
+        "RunAtLoad": True,
+        "KeepAlive": True,
+        "ThrottleInterval": 10,
+        "ProcessType": "Background",
+    }
 
 
 def tar_bytes(entries):
@@ -157,6 +199,8 @@ def write_deb(destination, control, data):
 
 
 def build_variant(source_app, variant, version, output, signer=sign_app):
+    if not is_macho(source_app / "Helpers" / "CatVPNApi"):
+        raise ValueError("Missing CatVPNApi helper; run scripts/build_ios_daemon.py first")
     arch, app_parent, label = VARIANTS[variant]
     package = f"{PACKAGE_PREFIX}.{variant}"
     other_packages = [PACKAGE_PREFIX] + [f"{PACKAGE_PREFIX}.{v}" for v in VARIANTS if v != variant]
@@ -187,6 +231,12 @@ def build_variant(source_app, variant, version, output, signer=sign_app):
                 data = path.read_bytes()
                 installed_size += len(data)
                 entries.append((name, data, 0o755 if is_macho(path) else 0o644))
+        prefix = "var/jb/" if variant == "rootless" else ""
+        daemon_dir = prefix + "Library/LaunchDaemons"
+        entries += [(prefix + "Library", None, 0o755), (daemon_dir, None, 0o755)]
+        daemon_data = plistlib.dumps(launch_daemon(variant))
+        entries.append((f"{daemon_dir}/{DAEMON_LABEL}.plist", daemon_data, 0o644))
+        installed_size += len(daemon_data)
         control = (
             f"Package: {package}\nName: CatVPN Nord ({label})\nVersion: {version}\n"
             f"Architecture: {arch}\nMaintainer: CatVPN Nord\nSection: Networking\n"

@@ -70,6 +70,7 @@ jobs:
           flutter analyze --no-fatal-infos
           flutter test
           python3 -m unittest discover -s scripts/tests -v
+          python3 scripts/test_local_api.py
 
       - name: Build iOS Release (No Codesign)
         env:
@@ -85,7 +86,9 @@ jobs:
             --dart-define=NORD_PASS="$NORD_PASS"
 
       - name: Package three jailbreak variants
-        run: python3 scripts/package_jailbreak.py
+        run: |
+          python3 scripts/build_ios_daemon.py
+          python3 scripts/package_jailbreak.py
 
       - name: Upload jailbreak DEBs and APT index
         uses: actions/upload-artifact@v4

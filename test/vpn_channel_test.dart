@@ -40,4 +40,33 @@ void main() {
     expect(status.isAvailable, isTrue);
     expect(status.isConnected, isFalse);
   });
+
+  test('background API server selection is exposed to the UI', () async {
+    messenger.setMockMethodCallHandler(
+        channel,
+        (_) async => {
+              'state': 'UP',
+              'serverHostname': 'vn53.nordvpn.com',
+              'countryId': 234,
+            });
+    final status = await VpnChannel.getStatus();
+    expect(status.serverHostname, 'vn53.nordvpn.com');
+    expect(status.countryId, 234);
+  });
+
+  test('connect preserves the country for later API rotation', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'connect');
+      expect((call.arguments as Map)['countryId'], 234);
+      return 'UP';
+    });
+    expect(
+        await VpnChannel.connect(
+            wgQuickConfig: '',
+            hostname: 'vn53.nordvpn.com',
+            username: 'user',
+            password: 'pass',
+            countryId: 234),
+        'UP');
+  });
 }

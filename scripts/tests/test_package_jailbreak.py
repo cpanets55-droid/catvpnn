@@ -39,6 +39,8 @@ class PackageTests(unittest.TestCase):
         }))
         (self.app / "Runner").write_bytes(b"\xcf\xfa\xed\xfe" + b"test executable")
         (self.app / "asset.txt").write_text("asset", encoding="utf-8")
+        (self.app / "Helpers").mkdir()
+        (self.app / "Helpers" / "CatVPNApi").write_bytes(b"\xcf\xfa\xed\xfe" + b"test helper")
         self.signed = []
 
     def sign(self, app, profile):
@@ -62,6 +64,15 @@ class PackageTests(unittest.TestCase):
                     base = f"./{parent}/{package.APP_NAME}"
                     self.assertEqual(contents.getmember(f"{base}/Runner").mode, 0o755)
                     self.assertEqual(contents.getmember(f"{base}/asset.txt").mode, 0o644)
+                    self.assertEqual(contents.getmember(f"{base}/Helpers/CatVPNApi").mode, 0o755)
+                    prefix = "var/jb/" if variant == "rootless" else ""
+                    daemon_path = f"./{prefix}Library/LaunchDaemons/{package.DAEMON_LABEL}.plist"
+                    daemon = plistlib.loads(contents.extractfile(daemon_path).read())
+                    self.assertEqual(daemon["ProgramArguments"], [f"/{parent}/{package.APP_NAME}/Helpers/CatVPNApi"])
+                    self.assertEqual(daemon["UserName"], "mobile")
+                    self.assertTrue(daemon["KeepAlive"])
+                    self.assertTrue(daemon["RunAtLoad"])
+                    self.assertEqual(contents.getmember(daemon_path).mode, 0o644)
                     self.assertTrue(all(m.uid == m.gid == 0 for m in contents))
                     self.assertFalse(any("containers/Bundle" in m.name for m in contents))
                 with tarfile.open(fileobj=io.BytesIO(archive["control.tar.gz"])) as controls:
@@ -70,6 +81,11 @@ class PackageTests(unittest.TestCase):
                     self.assertEqual(controls.getmember("./postinst").mode, 0o755)
                     self.assertNotIn("rm -rf", preinst)
                     self.assertNotIn("\r", preinst)
+                    postinst = controls.extractfile("./postinst").read().decode()
+                    prerm = controls.extractfile("./prerm").read().decode()
+                    self.assertIn("launchctl load", postinst)
+                    self.assertIn("launchctl unload", prerm)
+                    self.assertIn("remove|deconfigure|upgrade", prerm)
         self.assertEqual(len(self.signed), 3)
         self.assertNotIn("com.apple.private.security.no-sandbox", self.signed[0])
         self.assertNotIn("com.apple.private.security.no-sandbox", self.signed[1])
@@ -109,6 +125,12 @@ class PackageTests(unittest.TestCase):
             raise RuntimeError("signing failed")
         with self.assertRaisesRegex(RuntimeError, "signing failed"):
             package.build_variant(self.app, "roothide", "1.0.5", self.root, fail)
+        self.assertEqual(list(self.root.rglob("*.deb")), [])
+
+    def test_missing_daemon_cannot_produce_a_release(self):
+        (self.app / "Helpers" / "CatVPNApi").unlink()
+        with self.assertRaisesRegex(ValueError, "Missing CatVPNApi"):
+            package.build_variant(self.app, "rootless", "1.0.6", self.root, self.sign)
         self.assertEqual(list(self.root.rglob("*.deb")), [])
 
     def test_never_overwrite_existing_package(self):

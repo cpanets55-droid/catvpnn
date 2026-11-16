@@ -1,17 +1,17 @@
 import Flutter
-import NetworkExtension
-import Security
 import UIKit
 
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
   private let channelName = "com.catvpn.nord/vpn"
   private let prefsPrefix = "catvpn_pref_"
-  private let keychainService = "com.catvpn.nord.catvp.ikev2"
-  private var vpnOperationInProgress = false
-  private var preferencesLoaded = false
-  private var statusObserver: NSObjectProtocol?
-  private var statusTimeout: DispatchWorkItem?
+  private let apiSession: URLSession = {
+    let config = URLSessionConfiguration.ephemeral
+    config.timeoutIntervalForRequest = 120
+    config.timeoutIntervalForResource = 125
+    config.requestCachePolicy = .reloadIgnoringLocalCacheData
+    return URLSession(configuration: config)
+  }()
 
   override func application(
     _ application: UIApplication,
@@ -35,34 +35,36 @@ import UIKit
       guard let self = self else { return }
       switch call.method {
       case "prepareVpn":
-        result(true)
+        self.apiRequest(path: "/health", method: "GET", body: nil) { value in
+          if let error = value as? FlutterError { result(error) } else { result(true) }
+        }
 
       case "connect":
         guard let args = call.arguments as? [String: Any] else {
           result(FlutterError(code: "INVALID_ARGS", message: "Missing arguments", details: nil))
           return
         }
-        let hostname = (args["hostname"] as? String) ?? ""
-        let username = (args["username"] as? String) ?? ""
-        let password = (args["password"] as? String) ?? ""
-        if hostname.isEmpty || username.isEmpty || password.isEmpty {
-          result("NEED_WG_EXPORT")
-          return
+        let hostname = args["hostname"] as? String ?? ""
+        let username = args["username"] as? String ?? ""
+        let password = args["password"] as? String ?? ""
+        guard !hostname.isEmpty && !username.isEmpty && !password.isEmpty else {
+          result("NEED_WG_EXPORT"); return
         }
-        self.connectIkev2(hostname: hostname, username: username, password: password, result: result)
+        var body: [String: Any] = ["hostname": hostname, "username": username, "password": password]
+        if let country = args["countryId"] as? Int, country > 0 { body["country_id"] = country }
+        self.apiRequest(path: "/connect", method: "POST", body: body) { value in
+          if let error = value as? FlutterError { result(error) }
+          else { result((value as? [String: Any])?["state"] ?? "DOWN") }
+        }
 
       case "disconnect":
-        self.disconnectVpn(result: result)
+        self.apiRequest(path: "/disconnect", method: "POST", body: [:]) { value in
+          if let error = value as? FlutterError { result(error) }
+          else { result((value as? [String: Any])?["state"] ?? "DOWN") }
+        }
 
       case "getStatus":
-        if self.preferencesLoaded {
-          result(self.statusSnapshot())
-        } else {
-          NEVPNManager.shared().loadFromPreferences { error in
-            self.preferencesLoaded = error == nil
-            result(error == nil ? self.statusSnapshot() : self.vpnError("VPN_LOAD", error))
-          }
-        }
+        self.apiRequest(path: "/status", method: "GET", body: nil, result: result)
 
       case "shareWireGuardFile":
         guard let args = call.arguments as? [String: Any],
@@ -99,205 +101,30 @@ import UIKit
     }
   }
 
-  private func connectIkev2(
-    hostname: String,
-    username: String,
-    password: String,
-    result: @escaping FlutterResult
-  ) {
-    guard !vpnOperationInProgress else {
-      result(vpnError("VPN_BUSY", nil, "Một thao tác VPN khác đang chạy."))
-      return
+  private func apiRequest(path: String, method: String, body: [String: Any]?, result: @escaping FlutterResult) {
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:8787" + path)!)
+    request.httpMethod = method
+    request.setValue("application/json", forHTTPHeaderField: "Accept")
+    if let body = body {
+      request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+      request.httpBody = try? JSONSerialization.data(withJSONObject: body)
     }
-    vpnOperationInProgress = true
-    let finish: FlutterResult = { value in
-      self.vpnOperationInProgress = false
-      result(value)
-    }
-    guard let passwordRef = savePasswordToKeychain(account: username, password: password) else {
-      finish(vpnError("KEYCHAIN_WRITE", nil, "Không lưu được thông tin VPN vào Keychain."))
-      return
-    }
-
-    let manager = NEVPNManager.shared()
-    manager.loadFromPreferences { loadErr in
-      if loadErr != nil {
-        finish(self.vpnError("VPN_LOAD", loadErr))
-        return
-      }
-      self.preferencesLoaded = true
-
-      // Finish stopping the previous tunnel before saving a different server.
-      if manager.connection.status != .disconnected && manager.connection.status != .invalid {
-        manager.connection.stopVPNTunnel()
-        self.waitForStatus(.disconnected, timeout: 15) { stopped in
-          if stopped {
-            self.configureIkev2(hostname: hostname, username: username, passwordRef: passwordRef, result: finish)
-          } else {
-            finish(self.vpnError("VPN_STOP_TIMEOUT", nil, "VPN cũ chưa ngắt kết nối. Hãy thử lại."))
-          }
-        }
-      } else {
-        self.configureIkev2(hostname: hostname, username: username, passwordRef: passwordRef, result: finish)
-      }
-    }
-  }
-
-  private func configureIkev2(hostname: String, username: String, passwordRef: Data, result: @escaping FlutterResult) {
-    let manager = NEVPNManager.shared()
-    let ikev2 = NEVPNProtocolIKEv2()
-    ikev2.serverAddress = hostname
-    ikev2.remoteIdentifier = hostname
-    ikev2.localIdentifier = username
-    ikev2.authenticationMethod = .none
-    ikev2.useExtendedAuthentication = true
-    ikev2.username = username
-    ikev2.passwordReference = passwordRef
-    ikev2.disconnectOnSleep = false
-    ikev2.enablePFS = true
-
-    ikev2.ikeSecurityAssociationParameters.encryptionAlgorithm = .algorithmAES256GCM
-    ikev2.ikeSecurityAssociationParameters.integrityAlgorithm = .SHA384
-    ikev2.ikeSecurityAssociationParameters.diffieHellmanGroup = .group20
-
-    ikev2.childSecurityAssociationParameters.encryptionAlgorithm = .algorithmAES256GCM
-    ikev2.childSecurityAssociationParameters.integrityAlgorithm = .SHA384
-    ikev2.childSecurityAssociationParameters.diffieHellmanGroup = .group20
-
-    manager.protocolConfiguration = ikev2
-    manager.localizedDescription = "CatVPN Nord"
-    manager.isEnabled = true
-
-    manager.saveToPreferences { saveErr in
-      if saveErr != nil {
-        result(self.vpnError("VPN_SAVE", saveErr))
-        return
-      }
-
-      manager.loadFromPreferences { reloadErr in
-        if reloadErr != nil {
-          result(self.vpnError("VPN_LOAD", reloadErr))
+    apiSession.dataTask(with: request) { data, response, error in
+      DispatchQueue.main.async {
+        guard error == nil, let data = data, let response = response as? HTTPURLResponse,
+              let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+          result(FlutterError(code: "VPN_API_UNAVAILABLE",
+            message: "Dịch vụ CatVPN API chưa chạy. Kiểm tra jailbreak hoặc cài lại gói CatVPN trong Sileo.", details: nil))
           return
         }
-        do {
-          try manager.connection.startVPNTunnel()
-          self.waitForStatus(.connected, timeout: 45) { connected in
-            if connected {
-              result("UP")
-            } else {
-              manager.connection.stopVPNTunnel()
-              result(self.vpnError("VPN_CONNECT_FAILED", nil, "Không thiết lập được IKEv2. Kiểm tra mạng, máy chủ và tài khoản dịch vụ NordVPN."))
-            }
-          }
-        } catch {
-          result(self.vpnError("VPN_START", error))
+        guard response.statusCode == 200 else {
+          result(FlutterError(code: json["error"] as? String ?? "VPN_API_ERROR",
+            message: json["message"] as? String ?? "Không thực hiện được thao tác VPN.", details: nil))
+          return
         }
+        result(json)
       }
-    }
-  }
-
-  private func vpnError(_ code: String, _ error: Error?, _ message: String = "Không truy cập được cấu hình VPN. Kiểm tra quyền Personal VPN của bản cài đặt.") -> FlutterError {
-    return FlutterError(code: code, message: error?.localizedDescription ?? message, details: nil)
-  }
-
-  private func statusSnapshot() -> [String: Any] {
-    let state: String
-    switch NEVPNManager.shared().connection.status {
-    case .connected: state = "UP"
-    case .connecting, .reasserting: state = "CONNECTING"
-    case .disconnecting: state = "DISCONNECTING"
-    default: state = "DOWN"
-    }
-    return ["state": state, "rxBytes": 0, "txBytes": 0, "revoked": false,
-            "supportsTrafficStats": false]
-  }
-
-  private func disconnectVpn(result: @escaping FlutterResult) {
-    guard !vpnOperationInProgress else {
-      result(vpnError("VPN_BUSY", nil, "Một thao tác VPN khác đang chạy."))
-      return
-    }
-    vpnOperationInProgress = true
-    let manager = NEVPNManager.shared()
-    manager.loadFromPreferences { error in
-      if let error = error {
-        self.vpnOperationInProgress = false
-        result(self.vpnError("VPN_LOAD", error))
-        return
-      }
-      self.preferencesLoaded = true
-      manager.connection.stopVPNTunnel()
-      self.waitForStatus(.disconnected, timeout: 15) { stopped in
-        self.vpnOperationInProgress = false
-        result(stopped ? "DOWN" : self.vpnError("VPN_STOP_TIMEOUT", nil, "VPN chưa ngắt kết nối. Hãy thử lại."))
-      }
-    }
-  }
-
-  // Observe the actual tunnel state; accepting .connecting as success exposed
-  // a false protected state while authentication was still in progress.
-  private func waitForStatus(_ target: NEVPNStatus, timeout: TimeInterval, completion: @escaping (Bool) -> Void) {
-    let connection = NEVPNManager.shared().connection
-    var completed = false
-    var sawConnecting = connection.status == .connecting || connection.status == .reasserting
-    let finish: (Bool) -> Void = { success in
-      guard !completed else { return }
-      completed = true
-      if let observer = self.statusObserver {
-        NotificationCenter.default.removeObserver(observer)
-      }
-      self.statusObserver = nil
-      self.statusTimeout?.cancel()
-      self.statusTimeout = nil
-      completion(success)
-    }
-    let evaluate: () -> Void = {
-      let status = connection.status
-      if status == target || (target == .disconnected && status == .invalid) {
-        finish(true)
-      } else if target == .connected {
-        if status == .connecting || status == .reasserting { sawConnecting = true }
-        if status == .invalid || (sawConnecting && status == .disconnected) { finish(false) }
-      }
-    }
-    statusObserver = NotificationCenter.default.addObserver(
-      forName: .NEVPNStatusDidChange, object: connection, queue: .main
-    ) { _ in evaluate() }
-    let work = DispatchWorkItem { finish(false) }
-    statusTimeout = work
-    DispatchQueue.main.asyncAfter(deadline: .now() + timeout, execute: work)
-    evaluate()
-  }
-
-  private func savePasswordToKeychain(account: String, password: String) -> Data? {
-    guard let passwordData = password.data(using: .utf8) else { return nil }
-
-    let query: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: keychainService,
-      kSecAttrAccount as String: account
-    ]
-    let attributes: [String: Any] = [
-      kSecValueData as String: passwordData,
-      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-    ]
-    let updateStatus = SecItemUpdate(query as CFDictionary, attributes as CFDictionary)
-    if updateStatus == errSecItemNotFound {
-      let addQuery = query.merging(attributes) { _, new in new }
-      guard SecItemAdd(addQuery as CFDictionary, nil) == errSecSuccess else { return nil }
-    } else if updateStatus != errSecSuccess {
-      return nil
-    }
-    var referenceQuery = query
-    referenceQuery[kSecReturnPersistentRef as String] = true
-    referenceQuery[kSecMatchLimit as String] = kSecMatchLimitOne
-
-    var itemRef: CFTypeRef?
-    let status = SecItemCopyMatching(referenceQuery as CFDictionary, &itemRef)
-    if status == errSecSuccess {
-      return itemRef as? Data
-    }
-    return nil
+    }.resume()
   }
 
   private func presentWireGuardShareSheet(
