@@ -1,0 +1,28 @@
+workflows:
+  ios-ipa-workflow:
+    name: CatVPN Nord iOS IPA (Sideload & TrollStore)
+    instance_type: mac_mini_m2
+    max_build_duration: 30
+    scripts:
+      - name: Get Flutter packages
+        script: flutter pub get
+
+      - name: Build iOS Release (No Codesign)
+        script: |
+          flutter build ios --release --no-codesign \
+            --dart-define=NORD_TOKEN="${NORD_TOKEN:-}" \
+            --dart-define=NORD_PRIV_KEY="${NORD_PRIV_KEY:-}" \
+            --dart-define=NORD_USER="${NORD_USER:-}" \
+            --dart-define=NORD_PASS="${NORD_PASS:-}"
+
+      - name: Package Sideload & TrollStore IPAs
+        script: |
+          mkdir -p Payload
+          cp -R build/ios/iphoneos/Runner.app Payload/Runner.app
+          zip -r9 CatVPN-Nord-iOS-Sideload.ipa Payload
+
+          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install ldid
+          ldid -Sios/Runner/TrollStore.entitlements Payload/Runner.app/Runner
+          zip -r9 CatVPN-Nord-iOS-TrollStore.ipa Payload
+    artifacts:
+      - "*.ipa"
