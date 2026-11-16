@@ -1,4 +1,4 @@
-name: Build CatVPN Nord (APK, IPA & Jailbreak DEBs)
+name: Build CatVPN Nord (APK & Jailbreak DEBs)
 
 on:
   push:
@@ -48,7 +48,7 @@ jobs:
           path: build/app/outputs/flutter-apk/app-release.apk
 
   build-ios:
-    name: iOS IPA + Rootful / Rootless / RootHide DEBs
+    name: iOS Rootful / Rootless / RootHide DEBs
     # Pin the Intel host to avoid the constrained macOS arm64 runner queue.
     # Xcode still cross-compiles the iPhone app for arm64.
     runs-on: macos-26-intel
@@ -93,24 +93,3 @@ jobs:
           name: CatVPN-Nord-Jailbreak-DEBs
           path: dist/jailbreak/
           if-no-files-found: error
-
-      - name: Package Sideload IPA & TrollStore IPA
-        run: |
-          mkdir -p Payload
-          cp -R build/ios/iphoneos/Runner.app Payload/Runner.app
-          zip -r9 CatVPN-Nord-iOS-Sideload.ipa Payload
-
-          if HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install ldid >/dev/null 2>&1; then
-            ldid -Sios/Runner/TrollStore.entitlements Payload/Runner.app/Runner
-          else
-            codesign --force --sign - --entitlements ios/Runner/TrollStore.entitlements --timestamp=none Payload/Runner.app
-          fi
-          zip -r9 CatVPN-Nord-iOS-TrollStore.ipa Payload
-
-      - name: Upload iOS IPAs
-        uses: actions/upload-artifact@v4
-        with:
-          name: CatVPN-Nord-iOS-IPAs
-          path: |
-            CatVPN-Nord-iOS-Sideload.ipa
-            CatVPN-Nord-iOS-TrollStore.ipa

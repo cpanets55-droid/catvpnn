@@ -1,6 +1,6 @@
 workflows:
   ios-ipa-workflow:
-    name: CatVPN Nord iOS IPA + Rootful / Rootless / RootHide DEBs
+    name: CatVPN Nord iOS Rootful / Rootless / RootHide DEBs
     instance_type: mac_mini_m2
     max_build_duration: 30
     environment:
@@ -32,23 +32,5 @@ workflows:
 
       - name: Package three jailbreak variants
         script: python3 scripts/package_jailbreak.py
-
-      - name: Package Sideload & TrollStore IPAs
-        script: |
-          rm -rf Payload
-          mkdir -p Payload
-          cp -R build/ios/iphoneos/Runner.app Payload/Runner.app
-          zip -r9 CatVPN-Nord-iOS-Sideload.ipa Payload
-
-          rm -rf Payload
-          mkdir -p Payload
-          cp -R build/ios/iphoneos/Runner.app Payload/Runner.app
-          if HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install ldid >/dev/null 2>&1; then
-            ldid -Sios/Runner/TrollStore.entitlements Payload/Runner.app/Runner
-          else
-            codesign --force --sign - --entitlements ios/Runner/TrollStore.entitlements --timestamp=none Payload/Runner.app
-          fi
-          zip -r9 CatVPN-Nord-iOS-TrollStore.ipa Payload
     artifacts:
-      - "*.ipa"
       - "dist/jailbreak/**"

@@ -78,7 +78,9 @@ then runs `codesign --verify --deep --strict`. A signing failure stops packaging
 It requires macOS codesign: packaging tests run on Windows/Linux, but an IPA
 compiled before a source change cannot contain that change.
 
-The GitHub workflow uploads CatVPN-Nord-Jailbreak-DEBs separately from the IPAs.
+The iOS workflow builds only the three jailbreak DEBs and APT indexes; it does
+not create sideload or TrollStore IPAs. The GitHub artifact is
+CatVPN-Nord-Jailbreak-DEBs.
 The Codemagic workflow publishes the same files as build artifacts.
 Both use the same packaging script. A green Pages deployment only confirms the
 repository files were published, not that the application was compiled.
