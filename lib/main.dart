@@ -283,6 +283,14 @@ class _CatVpnHomeScreenState extends State<CatVpnHomeScreen> {
 
       NordAccountCredentials? creds = _credentials;
       if (creds == null || creds.privateKey.isEmpty) {
+        if (_accessToken.trim().isEmpty) {
+          setState(() {
+            _phase = VpnConnectionPhase.disconnected;
+            _statusHint = 'Bấm biểu tượng Cài đặt góc trên phải để dán Nord Token.';
+          });
+          await _openSettingsSheet();
+          return;
+        }
         setState(() => _statusHint = 'Đang xác thực NordVPN Token...');
         creds = await NordApiService.fetchAccountCredentials(_accessToken);
         await VpnChannel.savePref('private_key', creds.privateKey);
