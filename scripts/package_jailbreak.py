@@ -221,6 +221,7 @@ def write_indexes(output, packages):
     release = (
         "Origin: CatVPN Nord\nLabel: CatVPN Nord\nSuite: stable\nCodename: ios\n"
         "Architectures: iphoneos-arm iphoneos-arm64 iphoneos-arm64e\n"
+        "Components: main\n"
         "Description: CatVPN Nord jailbreak packages\n"
     )
     for field, algorithm in [("MD5Sum", "md5"), ("SHA256", "sha256")]:

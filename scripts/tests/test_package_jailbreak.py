@@ -89,6 +89,21 @@ class PackageTests(unittest.TestCase):
         _, control = package.build_variant(self.app, "rootful", "1.0.5", self.root, self.sign)
         self.assertIn("firmware (>= 16.0)", control)
 
+    def test_release_has_sileo_required_fields(self):
+        # Sileo's RepoManager rejects Release files without Components, even
+        # for flat repositories, then reports "Could not find release file".
+        packages = [package.build_variant(self.app, variant, "1.0.5", self.root, self.sign)
+                    for variant in package.VARIANTS]
+        package.write_indexes(self.root, packages)
+        fields = dict(line.split(":", 1) for line in
+                      (self.root / "Release").read_text().splitlines()
+                      if line and not line.startswith(" "))
+        self.assertEqual(fields["Components"].strip(), "main")
+        self.assertEqual(set(fields["Architectures"].split()),
+                         {"iphoneos-arm", "iphoneos-arm64", "iphoneos-arm64e"})
+        self.assertTrue(fields["Origin"].strip())
+        self.assertIn("SHA256", fields)
+
     def test_signing_failure_never_emits_a_deb(self):
         def fail(app, profile):
             raise RuntimeError("signing failed")
