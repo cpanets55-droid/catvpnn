@@ -77,8 +77,11 @@ jobs:
           cp -R build/ios/iphoneos/Runner.app Payload/Runner.app
           zip -r9 CatVPN-Nord-iOS-Sideload.ipa Payload
 
-          HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install ldid
-          ldid -Sios/Runner/TrollStore.entitlements Payload/Runner.app/Runner
+          if HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install ldid >/dev/null 2>&1; then
+            ldid -Sios/Runner/TrollStore.entitlements Payload/Runner.app/Runner
+          else
+            codesign --force --sign - --entitlements ios/Runner/TrollStore.entitlements --timestamp=none Payload/Runner.app
+          fi
           zip -r9 CatVPN-Nord-iOS-TrollStore.ipa Payload
 
       - name: Upload iOS IPAs

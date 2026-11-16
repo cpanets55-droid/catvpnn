@@ -133,11 +133,11 @@ import UIKit
       ikev2.enablePFS = true
 
       ikev2.ikeSecurityAssociationParameters.encryptionAlgorithm = .algorithmAES256GCM
-      ikev2.ikeSecurityAssociationParameters.integrityAlgorithm = .integritySHA384
+      ikev2.ikeSecurityAssociationParameters.integrityAlgorithm = .SHA384
       ikev2.ikeSecurityAssociationParameters.diffieHellmanGroup = .group20
 
       ikev2.childSecurityAssociationParameters.encryptionAlgorithm = .algorithmAES256GCM
-      ikev2.childSecurityAssociationParameters.integrityAlgorithm = .integritySHA384
+      ikev2.childSecurityAssociationParameters.integrityAlgorithm = .SHA384
       ikev2.childSecurityAssociationParameters.diffieHellmanGroup = .group20
 
       manager.protocolConfiguration = ikev2
